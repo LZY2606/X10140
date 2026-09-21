@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>迁移依赖规划器</title>
+<style>
+:root{
+  --bg:#0f1420;--panel:#182031;--panel2:#1f2a40;--line:#2c3a55;
+  --text:#e6ecf7;--muted:#94a3bf;--accent:#4f8cff;--ok:#2fbf71;
+  --warn:#e8a13a;--bad:#e5484d;--manual:#b07cff;--run:#4f8cff;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif;
+  background:var(--bg);color:var(--text);font-size:14px}
+header{padding:14px 22px;border-bottom:1px solid var(--line);display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+header h1{font-size:19px;margin:0}
+header .sub{color:var(--muted);font-size:12px}
+main{padding:18px 22px;display:flex;flex-direction:column;gap:18px;max-width:1280px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+.card h2{margin:0 0 12px;font-size:15px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-size:12px;color:var(--muted)}
+input,select,button,textarea{font:inherit;background:var(--panel2);color:var(--text);
+  border:1px solid var(--line);border-radius:6px;padding:7px 9px}
+input:focus,textarea:focus,select:focus{outline:1px solid var(--accent)}
+button{cursor:pointer;padding:7px 13px}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.danger{color:#ffb4b6;border-color:#6d3336}
+button.mini{padding:3px 8px;font-size:12px;border-radius:5px}
+button:disabled{opacity:.45;cursor:not-allowed}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{border-bottom:1px solid var(--line);padding:7px 8px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600;white-space:nowrap}
+td input{width:100%;padding:5px 7px}
+.tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;margin:1px 2px 1px 0;
+  background:var(--panel2);border:1px solid var(--line)}
+.status{display:inline-block;padding:2px 9px;border-radius:11px;font-size:12px;white-space:nowrap}
+.s-pending{color:var(--muted);border:1px solid var(--line)}
+.s-running{color:var(--run);border:1px solid var(--run)}
+.s-success{color:var(--ok);border:1px solid var(--ok)}
+.s-failed{color:var(--bad);border:1px solid var(--bad)}
+.s-rolled_back{color:#7fd4c1;border:1px solid #2e7d6d}
+.s-manual{color:var(--manual);border:1px solid var(--manual)}
+.wave{border:1px solid var(--line);border-radius:8px;margin:10px 0;overflow:hidden}
+.wave-head{background:var(--panel2);padding:8px 12px;display:flex;gap:10px;align-items:center}
+.gantt{position:relative;padding:10px 12px;min-height:56px}
+.bar{position:relative;height:26px;border-radius:6px;margin:6px 0;padding:4px 9px;
+  background:linear-gradient(90deg,#31538f,#4f8cff);border:1px solid #6fa0ff;
+  display:flex;align-items:center;gap:8px;overflow:hidden;white-space:nowrap}
+.bar.blocked{background:linear-gradient(90deg,#6b2f32,#e5484d);border-color:#ff8a8e}
+.bar.success{background:linear-gradient(90deg,#1d5c3c,#2fbf71);border-color:#5fe09a}
+.bar.failed{background:linear-gradient(90deg,#6b2f32,#e5484d);border-color:#ff8a8e}
+.bar.running{background:linear-gradient(90deg,#31538f,#8ab4ff)}
+.bar.manual{background:linear-gradient(90deg,#4c3a78,#b07cff);border-color:#c9a6ff}
+.bar.rolled_back{background:repeating-linear-gradient(45deg,#33504a,#33504a 6px,#263d39 6px,#263d39 12px);border-color:#4a8174}
+.axis{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;padding:0 12px 8px}
+.muted{color:var(--muted)}
+.small{font-size:12px}
+.errorbox{background:#3a1f22;border:1px solid #6d3336;color:#ffb4b6;padding:9px 12px;border-radius:7px;white-space:pre-wrap}
+.okbox{background:#14331f;border:1px solid #235c38;padding:9px 12px;border-radius:7px}
+.note{color:var(--muted);font-size:12px;margin-top:5px}
+.reason{margin-top:5px;padding:6px 9px;background:var(--panel2);border-left:3px solid var(--warn);
+  border-radius:0 5px 5px 0;font-size:12px;white-space:pre-wrap}
+.blockedlist td{color:#ffb4b6}
+#toast{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:8px;z-index:50}
+.toast{padding:10px 14px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);max-width:420px}
+.toast.err{border-color:#6d3336;color:#ffb4b6}
+.toast.ok{border-color:#235c38;color:#9be8b7}
+.planpick{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+code{background:var(--panel2);padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>迁移依赖规划器</h1>
+  <span class="sub">依赖波次 · 互斥资源 · 时区维护窗口 · 指纹漂移阻塞 · 崩溃恢复 · 追加事件日志</span>
+</header>
+<main>
+
+<section class="card" id="nodesCard">
+  <h2>1. 迁移节点定义（修改只影响之后新建的计划，历史计划保留快照）</h2>
+  <table id="nodeTable">
+    <thead><tr>
+      <th style="width:90px">ID</th><th style="width:150px">名称</th>
+      <th style="width:160px">前置（逗号）</th><th style="width:130px">互斥资源（逗号）</th>
+      <th style="width:80px">分钟</th><th style="width:80px">可回滚</th>
+      <th style="width:170px">可接受输入指纹（逗号）</th><th style="width:140px">输出指纹</th>
+      <th style="width:120px">操作</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="row" style="margin-top:10px">
+    <button id="addNode">+ 新增空行</button>
+    <button class="primary" id="saveNodes">保存全部节点定义</button>
+    <span class="small muted">空输入指纹列表 = 接受任意起始指纹；执行阶段成功事件会回传实际输出指纹用于漂移检测。</span>
+  </div>
+</section>
+
+<section class="card">
+  <h2>2. 选择起始 schema 指纹与维护窗口，生成可执行波次</h2>
+  <div class="row">
+    <div class="field"><label>起始 schema 指纹</label><input id="startFP" value="fp-v3" style="width:180px"></div>
+    <div class="field"><label>窗口开始（YYYY-MM-DDTHH:MM 或 RFC3339）</label>
+      <input id="winStart" style="width:250px"></div>
+    <div class="field"><label>窗口结束</label><input id="winEnd" style="width:190px"></div>
+    <div class="field"><label>时区（IANA）</label><input id="winZone" value="Asia/Tokyo" style="width:170px"></div>
+    <div class="field"><label>&nbsp;</label><button class="primary" id="buildPlan">生成波次计划</button></div>
+    <div class="field"><label>&nbsp;</label><button id="quick60">窗口样例 60 分钟</button></div>
+    <div class="field"><label>&nbsp;</label><button id="quick45">窗口样例 45 分钟（触发端点阻塞）</button></div>
+  </div>
+  <div id="planError" style="margin-top:10px"></div>
+</section>
+
+<section class="card">
+  <h2>3. 历史计划与崩溃恢复开关</h2>
+  <div class="planpick">
+    <label class="muted">选择计划：</label><select id="planSelect" style="min-width:430px"></select>
+    <label class="small"><input type="checkbox" id="recoverChk" style="width:auto"> 模拟崩溃后重启（运行中→人工接管；成功且指纹匹配→跳过不重跑）</label>
+    <button id="refreshView" class="mini">刷新执行视图</button>
+  </div>
+</section>
+
+<section class="card">
+  <h2>4. 波次甘特布局（窗口相对分钟轴；红色条=窗口阻塞/失败，附每个节点的入波/阻塞理由）</h2>
+  <div id="gantt"></div>
+</section>
+
+<section class="card">
+  <h2>5. 逐步记录执行结果</h2>
+  <table id="execTable">
+    <thead><tr>
+      <th style="width:80px">波次</th><th style="width:80px">节点</th><th style="width:110px">状态</th>
+      <th style="width:200px">实际输出指纹（模拟漂移可改）</th><th>判定 / 阻塞理由</th>
+      <th style="width:300px">操作（含幂等键）</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+  <h2 style="margin-top:16px">规划阶段即阻塞的节点</h2>
+  <table><thead><tr><th style="width:100px">节点</th><th>原因</th></tr></thead>
+  <tbody id="blockedBody"></tbody></table>
+</section>
+
+<section class="card">
+  <h2>6. 失败节点回滚计划（只含已执行且声明可回滚的逆序祖先）</h2>
+  <div class="row">
+    <select id="rbNode" style="width:160px"></select>
+    <button id="rbBtn">生成回滚计划</button>
+  </div>
+  <div id="rbOut" style="margin-top:10px"></div>
+</section>
+
+<section class="card">
+  <h2>7. 追加事件日志（每次规划与执行事件都落盘，按幂等键去重）</h2>
+  <div class="small muted" id="dataFile"></div>
+  <div id="eventLog" style="margin-top:8px;max-height:260px;overflow:auto;font-family:ui-monospace,Menlo,monospace;font-size:11.5px"></div>
+</section>
+
+</main>
+<div id="toast"></div>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const api = async (path, opts={}) => {
+  const res = await fetch(path, Object.assign({headers:{'Content-Type':'application/json'}}, opts));
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch(e){ data = text; }
+  if (!res.ok) throw new Error((data && data.error) || ('HTTP '+res.status));
+  return data;
+};
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const csv = s => String(s||'').split(',').map(x=>x.trim()).filter(Boolean);
+let STATE = {nodes:[], plans:[], view:null, planId:null, dataFile:''};
+let seqCounter = 0;
+const idem = (node, action) => `${STATE.planId||'none'}-${node}-${action}-${Date.now().toString(36)}-${(seqCounter++).toString(36)}`;
+
+function toast(msg, kind){
+  kind = kind || 'ok';
+  const el=document.createElement('div'); el.className='toast '+kind; el.textContent=msg;
+  $('#toast').appendChild(el); setTimeout(()=>el.remove(), 4200);
+}
+
+async function loadState(){
+  STATE = await api('/api/state');
+  STATE.view = null;
+  renderNodeRows(STATE.nodes);
+  renderPlanSelect();
+  $('#dataFile').textContent = '数据文件（JSONL 追加写）: ' + STATE.dataFile;
+  await renderEventLog();
+  if (STATE.planId && STATE.plans.find(p=>p.id===STATE.planId)) await loadView();
+  else renderGanttEmpty();
+}
+
+function emptyNode(){return {id:'',name:'',prereqs:'',resources:'',minutes:10,rollback:false,inputs:'',output:''};}
+function nodeToRow(n){return {id:n.id,name:n.name,prereqs:(n.prereqs||[]).join(', '),resources:(n.resources||[]).join(', '),minutes:n.minutes,rollback:n.rollback,inputs:(n.inputs||[]).join(', '),output:n.output};}
+
+function renderNodeRows(nodes){
+  const tb=$('#nodeTable tbody'); tb.innerHTML='';
+  const rows = nodes.length ? nodes.map(nodeToRow) : [emptyNode()];
+  rows.forEach(r=>tb.appendChild(nodeRowEl(r)));
+}
+function nodeRowEl(r){
+  const tr=document.createElement('tr');
+  tr.innerHTML =
+    '<td><input data-k="id" value="'+esc(r.id)+'" '+(r.id?'readonly':'')+'></td>'+
+    '<td><input data-k="name" value="'+esc(r.name)+'"></td>'+
+    '<td><input data-k="prereqs" value="'+esc(r.prereqs)+'"></td>'+
+    '<td><input data-k="resources" value="'+esc(r.resources)+'"></td>'+
+    '<td><input data-k="minutes" type="number" min="0" value="'+r.minutes+'"></td>'+
+    '<td><input data-k="rollback" type="checkbox" '+(r.rollback?'checked':'')+' style="width:auto"></td>'+
+    '<td><input data-k="inputs" value="'+esc(r.inputs)+'"></td>'+
+    '<td><input data-k="output" value="'+esc(r.output)+'"></td>'+
+    '<td>'+(r.id?'<button class="mini danger" data-del="'+esc(r.id)+'">删除</button>':'<span class="muted small">保存后生效</span>')+'</td>';
+  tr.querySelectorAll('[data-del]').forEach(btn=>btn.addEventListener('click', async e=>{
+    const id=e.target.dataset.del;
+    if(!confirm('删除节点 '+id+'？已生成的历史计划不受影响。')) return;
+    await api('/api/nodes?id='+encodeURIComponent(id),{method:'DELETE'});
+    toast('已删除节点 '+id); await loadState();
+  }));
+  return tr;
+}
+$('#addNode').onclick=()=>$('#nodeTable tbody').appendChild(nodeRowEl(emptyNode()));
+$('#saveNodes').onclick=async()=>{
+  const rows=[...$('#nodeTable tbody tr')].map(tr=>{
+    const get=k=>tr.querySelector('[data-k="'+k+'"]');
+    return {id:get('id').value.trim(), name:get('name').value.trim(),
+      prereqs:csv(get('prereqs').value), resources:csv(get('resources').value),
+      minutes:parseInt(get('minutes').value||'0',10), rollback:get('rollback').checked,
+      inputs:csv(get('inputs').value), output:get('output').value.trim()};
+  });
+  try{
+    for(const n of rows){
+      if(!n.id){ toast('存在未填写 ID 的行，已跳过','err'); continue; }
+      await api('/api/nodes',{method:'POST',body:JSON.stringify(n)});
+    }
+    toast('节点定义已追加保存（新版本，不改写历史计划）');
+    await loadState();
+  }catch(e){ toast(e.message,'err'); }
+};
+
+$('#quick60').onclick=()=>quickWindow(60);
+$('#quick45').onclick=()=>quickWindow(45);
+function quickWindow(mins){
+  const now=new Date();
+  const start=new Date(Math.ceil(now.getTime()/60000)*60000 + 5*60000);
+  const end=new Date(start.getTime()+mins*60000);
+  $('#winStart').value=fmt(start); $('#winEnd').value=fmt(end);
+}
+function fmt(d){
+  const p=n=>String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes());
+}
+
+$('#buildPlan').onclick=async()=>{
+  const body={startFingerprint:$('#startFP').value.trim(),
+    window:{start:$('#winStart').value.trim(),end:$('#winEnd').value.trim(),zone:$('#winZone').value.trim()}};
+  $('#planError').innerHTML='';
+  try{
+    const plan=await api('/api/plans',{method:'POST',body:JSON.stringify(body)});
+    STATE.planId=plan.id;
+    toast('计划已生成并追加到事件日志: '+plan.id);
+    await loadState();
+  }catch(e){
+    $('#planError').innerHTML='<div class="errorbox">'+esc(e.message)+'</div>';
+  }
+};
+
+function renderPlanSelect(){
+  const sel=$('#planSelect'); sel.innerHTML='';
+  if(!STATE.plans.length){ sel.innerHTML='<option>（尚无计划）</option>'; return; }
+  STATE.plans.slice().reverse().forEach(p=>{
+    const o=document.createElement('option'); o.value=p.id;
+    o.textContent=p.id+' | 起始='+p.startFingerprint+' | '+p.window.start+'~'+p.window.end+' '+p.window.zone+' | '+p.waves.length+' 波';
+    if(p.id===STATE.planId)o.selected=true; sel.appendChild(o);
+  });
+}
+$('#planSelect').onchange=async e=>{ STATE.planId=e.target.value; await loadView(); };
+$('#recoverChk').onchange=loadView;
+$('#refreshView').onclick=async()=>{ await renderEventLog(); await loadView(); };
+
+async function loadView(){
+  if(!STATE.planId){ renderGanttEmpty(); return; }
+  const rec=$('#recoverChk').checked?'?recovered=1':'';
+  STATE.view=await api('/api/plans/'+STATE.planId+'/view'+rec);
+  renderGantt(); renderExecTable();
+  const rb=$('#rbNode'); rb.innerHTML='';
+  const failed=STATE.view.order.filter(id=>STATE.view.nodes[id].status==='failed');
+  failed.forEach(id=>{const o=document.createElement('option');o.value=id;o.textContent=id;rb.appendChild(o);});
+  if(!rb.options.length) rb.innerHTML='<option>（没有失败节点）</option>';
+}
+
+const STATUS_CN={pending:'未开始',running:'运行中',success:'成功',failed:'失败',rolled_back:'已回滚',manual:'需要人工接管'};
+
+function renderGanttEmpty(){
+  $('#gantt').innerHTML='<span class="muted">请先生成并选择计划。</span>';
+  $('#execTable tbody').innerHTML='';
+  $('#blockedBody').innerHTML='';
+}
+
+function renderGantt(){
+  const v=STATE.view; if(!v){ renderGanttEmpty(); return; }
+  const blockedIds=new Set(v.plan.blocked.map(b=>b.id));
+  let html='';
+  if(v.recovery){
+    const rep=v.recovery;
+    html+='<div class="okbox">崩溃恢复投影（基于追加事件日志重放）：<ul style="margin:6px 0 0 18px">'+
+      '<li>中断时运行中、转人工接管：'+(rep.interrupted.length?rep.interrupted.map(esc).join('、'):'无')+'</li>'+
+      '<li>已成功且输出指纹匹配，跳过不重跑：'+(rep.skipped.length?rep.skipped.map(esc).join('、'):'无')+'</li>'+
+      '<li>输出指纹漂移：'+(rep.drifted.length?rep.drifted.map(esc).join('、'):'无')+'</li>'+
+      '<li>整条后继链进入阻塞：'+(rep.chainBlocked.length?rep.chainBlocked.map(esc).join('、'):'无')+'</li>'+
+      '</ul></div>';
+  }
+  if(!v.plan.waves.length) html+='<div class="muted">没有可调度的节点。</div>';
+  const max=Math.max.apply(null, v.plan.nodes.map(n=>n.finishMin).concat([1]));
+  v.plan.waves.forEach(w=>{
+    html+='<div class="wave"><div class="wave-head"><strong>波次 '+w.index+'</strong>'+
+      '<span class="muted small">起始相对第 '+w.startMin+' 分钟 · '+w.nodeIds.length+' 个节点并行 · 波内按 ID 稳定排序：'+
+      w.nodeIds.map(esc).join('、')+'</span></div><div class="gantt">';
+    w.nodes.slice().sort((a,b)=>a.id<b.id?-1:1).forEach(n=>{
+      const nv=v.nodes[n.id];
+      const cls=['bar'];
+      if(blockedIds.has(n.id)) cls.push('blocked');
+      else cls.push(nv.status);
+      const left=(n.startMin/max*100).toFixed(2);
+      const width=Math.max(4,(n.finishMin-n.startMin)/max*100).toFixed(2);
+      const res=(n.resources||[]).map(r=>'<span class="tag">&#128274;'+esc(r)+'</span>').join('');
+      html+='<div class="'+cls.join(' ')+'" style="margin-left:'+left+'%;width:'+width+'%" title="'+esc(n.note)+'">'+
+        '<strong>'+esc(n.id)+'</strong><span class="small">'+esc(n.name)+' · '+n.minutes+'m</span>'+res+
+        '<span class="small">['+n.startMin+'-'+n.finishMin+'m]</span></div>';
+    });
+    html+='</div><div class="axis"><span>第 '+w.startMin+' 分钟</span><span>波次末</span></div></div>';
+  });
+  html+='<div class="small muted">窗口 '+esc(v.plan.window.start)+' ~ '+esc(v.plan.window.end)+
+    '（时区 '+esc(v.plan.window.zone)+'）按 IANA 时区解释；恰好在窗口结束时刻完成允许，晚于结束或无法在结束前启动的节点列为阻塞。</div>';
+  $('#gantt').innerHTML=html;
+}
+
+function renderExecTable(){
+  const v=STATE.view;
+  const tb=$('#execTable tbody'); tb.innerHTML='';
+  const planBlocked={};
+  v.plan.blocked.forEach(b=>planBlocked[b.id]=b.reason);
+  v.plan.nodes.slice().sort((a,b)=>a.wave!==b.wave?a.wave-b.wave:a.id<b.id?-1:1).forEach(n=>{
+    const nv=v.nodes[n.id];
+    const tr=document.createElement('tr');
+    const actBtn=(action,label)=>{
+      const k=idem(n.id,action);
+      return '<button class="mini" data-act="'+action+'" data-key="'+k+'">'+label+'</button>'+
+        '<input data-keyinput="'+action+'" value="'+k+'" class="mini" style="width:150px;font-size:10px">';
+    };
+    let btns='';
+    if(nv.runnable && nv.status==='pending') btns+=actBtn('started','▶ 开始');
+    if(nv.status==='running'){
+      btns+=actBtn('succeeded','✔ 成功（按左侧指纹）');
+      btns+=actBtn('failed','✖ 失败');
+    }
+    if(nv.status==='failed'){
+      btns+=actBtn('started','↻ 重试开始');
+      btns+=actBtn('rolled_back','⤺ 回滚');
+      btns+=actBtn('manual','⛑ 人工接管');
+    }
+    if(nv.status==='success'){
+      btns+=actBtn('rolled_back','⤺ 回滚');
+      btns+=actBtn('manual','⛑ 人工接管');
+    }
+    if(nv.status==='rolled_back') btns+=actBtn('started','↻ 再次开始');
+    if(nv.status==='pending' && !nv.runnable && !nv.blocked) btns='<span class="muted small">等待前置</span>';
+    if(nv.blocked||nv.status==='manual') btns+=actBtn('manual','⛑ 标记/保持人工接管');
+    const fpVal=nv.actualFingerprint||n.output;
+    tr.innerHTML=
+      '<td>'+(n.wave<0?'—':n.wave)+'</td>'+
+      '<td><strong>'+esc(n.id)+'</strong><div class="small muted">'+esc(n.name)+'</div></td>'+
+      '<td><span class="status s-'+nv.status+'">'+STATUS_CN[nv.status]+'</span></td>'+
+      '<td><input data-fp value="'+esc(fpVal)+'" placeholder="（成功时上报）"></td>'+
+      '<td><div class="small">期望 '+esc(n.output)+(nv.actualFingerprint?' ｜ 实际 '+esc(nv.actualFingerprint):'')+'</div>'+
+        (nv.reason?'<div class="reason">'+esc(nv.reason)+'</div>':'')+
+        (planBlocked[n.id]?'<div class="reason" style="border-color:var(--bad)">规划阻塞：'+esc(planBlocked[n.id])+'</div>':'')+
+        (n.note?'<details class="small muted"><summary>为什么放在波次 '+(n.wave<0?'（未入波）':n.wave)+'</summary><div class="reason">'+esc(n.note)+'</div></details>':'')+'</td>'+
+      '<td>'+(btns||'<span class="muted small">—</span>')+'</td>';
+    tr.querySelectorAll('[data-act]').forEach(btn=>btn.addEventListener('click',()=>submitEvent(n.id,btn)));
+    tb.appendChild(tr);
+  });
+  const bb=$('#blockedBody');
+  bb.innerHTML = v.plan.blocked.length
+    ? v.plan.blocked.map(b=>'<tr class="blockedlist"><td><strong>'+esc(b.id)+'</strong></td><td>'+esc(b.reason)+'</td></tr>').join('')
+    : '<tr><td colspan="2" class="muted">无（全部节点可在窗口内调度）。</td></tr>';
+}
+
+async function submitEvent(nodeId, btn){
+  const action=btn.dataset.act;
+  const key=btn.parentElement.querySelector('[data-keyinput="'+action+'"]').value.trim();
+  const tr=btn.closest('tr');
+  const fp=tr.querySelector('[data-fp]')?tr.querySelector('[data-fp]').value.trim():'';
+  const typeMap={started:'started',succeeded:'succeeded',failed:'failed',rolled_back:'rolled_back',manual:'manual_takeover'};
+  const detail={failed:'执行失败（示例记录）',manual_takeover:'提交人工接管',rolled_back:'已按回滚计划撤销（记录）'}[typeMap[action]]||'';
+  try{
+    await api('/api/plans/'+STATE.planId+'/events',{method:'POST',
+      body:JSON.stringify({nodeId:nodeId,type:typeMap[action],idemKey:key,actualFingerprint:fp,detail})});
+    toast('事件已追加（幂等键 '+key.slice(0,24)+'…）');
+  }catch(e){ toast(e.message,'err'); }
+  await renderEventLog(); await loadView();
+}
+
+$('#rbBtn').onclick=async()=>{
+  const id=$('#rbNode').value;
+  if(!id || id.indexOf('（')===0){ $('#rbOut').innerHTML='<span class="muted">请先制造一个失败节点。</span>'; return; }
+  try{
+    const rp=await api('/api/plans/'+STATE.planId+'/rollback?node='+encodeURIComponent(id));
+    let html='<div class="'+(rp.complete?'okbox':'errorbox')+'">回滚目标 <strong>'+esc(rp.target)+'</strong> ｜ '+
+      (rp.complete
+        ? '回滚链完整，全部边界节点均可回滚'
+        : '<b>回滚方案不完整，已在节点 '+esc(rp.stoppedAt)+' 明确停止</b>：'+esc(rp.boundaryReason))+'</div>';
+    if(rp.steps && rp.steps.length){
+      html+='<table style="margin-top:8px"><thead><tr><th>逆序</th><th>节点</th><th>波次</th><th>时长</th><th>说明</th></tr></thead><tbody>';
+      rp.steps.forEach((s,i)=>{
+        html+='<tr><td>'+(i+1)+'</td><td><strong>'+esc(s.nodeId)+'</strong></td><td>'+s.wave+'</td><td>'+s.minutes+'m</td><td class="small">'+esc(s.reason)+'</td></tr>';
+      });
+      html+='</tbody></table>';
+    }else{
+      html+='<div class="muted small" style="margin-top:8px">没有任何可自动回滚步骤（目标自身即边界）。</div>';
+    }
+    (rp.warnings||[]).forEach(w=>html+='<div class="note">⚠ '+esc(w)+'</div>');
+    $('#rbOut').innerHTML=html;
+  }catch(e){ $('#rbOut').innerHTML='<div class="errorbox">'+esc(e.message)+'</div>'; }
+};
+
+async function renderEventLog(){
+  const text=await (await fetch('/api/events')).text();
+  const lines=text.split('\n').filter(Boolean).slice(-200);
+  $('#eventLog').innerHTML=lines.map(l=>{
+    try{
+      const o=JSON.parse(l);
+      let detail=o.type;
+      if(o.node) detail+=' node='+o.node.id;
+      if(o.plan) detail+=' plan='+o.plan.id+'('+o.plan.waves.length+'波)';
+      if(o.exec) detail+=' exec='+o.exec.nodeId+':'+o.exec.type+' idem='+o.exec.idemKey+(o.exec.actualFingerprint?' fp='+o.exec.actualFingerprint:'');
+      return '<div>#'+o.seq+' '+esc(o.at)+' <b>'+esc(detail)+'</b></div>';
+    }catch(e){return '<div>'+esc(l)+'</div>';}
+  }).join('') || '<div class="muted">（日志为空）</div>';
+  const box=$('#eventLog'); box.scrollTop=box.scrollHeight;
+}
+
+quickWindow(60);
+loadState();
+</script>
+</body>
+</html>
