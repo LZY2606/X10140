@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>迁移依赖规划器</title>
+<style>
+:root {
+  --bg:#f5f6f8; --card:#fff; --ink:#1f2329; --muted:#6b7280;
+  --line:#e5e7eb; --accent:#2563eb; --accent-soft:#dbeafe;
+  --ok:#16a34a; --okbg:#dcfce7; --run:#d97706; --runbg:#fef3c7;
+  --fail:#dc2626; --failbg:#fee2e2; --rb:#7c3aed; --rbbg:#ede9fe;
+  --manual:#0891b2; --manualbg:#cffafe; --block:#9ca3af;
+}
+* { box-sizing:border-box; }
+body { margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--ink); }
+header { background:#111827; color:#fff; padding:14px 22px; }
+header h1 { margin:0; font-size:18px; }
+header .sub { color:#9ca3af; font-size:12px; margin-top:2px; }
+.layout { display:grid; grid-template-columns:380px 1fr; gap:16px; padding:16px; align-items:start; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:16px; }
+.card h2 { margin:0 0 10px; font-size:15px; }
+label { display:block; font-size:12px; color:var(--muted); margin:8px 0 3px; }
+input[type=text],input[type=datetime-local],input[type=number],select,textarea {
+  width:100%; padding:6px 8px; border:1px solid var(--line); border-radius:6px; font-size:13px; font-family:inherit;
+}
+input:focus,select:focus,textarea:focus { outline:2px solid var(--accent-soft); border-color:var(--accent); }
+.row { display:flex; gap:8px; }
+.row > * { flex:1; }
+button { cursor:pointer; border:1px solid var(--line); background:#fff; border-radius:6px; padding:6px 12px; font-size:13px; font-family:inherit; }
+button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+button.danger { color:var(--fail); border-color:#fecaca; }
+button.small { padding:3px 8px; font-size:12px; }
+button:disabled { opacity:.5; cursor:not-allowed; }
+.check { display:flex; align-items:center; gap:6px; margin-top:8px; color:var(--ink); font-size:13px; }
+.check input { width:auto; }
+.node-item { border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-bottom:8px; }
+.node-item .ttl { font-weight:600; display:flex; justify-content:space-between; align-items:center; gap:6px; }
+.node-item .meta { color:var(--muted); font-size:12px; margin-top:2px; }
+.pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:600; }
+.pill.未开始 { background:#f3f4f6; color:#4b5563; }
+.pill.运行中 { background:var(--runbg); color:var(--run); }
+.pill.成功 { background:var(--okbg); color:var(--ok); }
+.pill.失败 { background:var(--failbg); color:var(--fail); }
+.pill.已回滚 { background:var(--rbbg); color:var(--rb); }
+.pill.需要人工接管 { background:var(--manualbg); color:var(--manual); }
+.gantt { position:relative; }
+.wave-row { display:grid; grid-template-columns:64px 1fr; gap:10px; align-items:stretch; margin-bottom:8px; }
+.wave-label { font-size:12px; color:var(--muted); padding-top:8px; text-align:right; }
+.wave-track { display:flex; gap:8px; flex-wrap:wrap; align-items:stretch; }
+.gnode { border:1px solid var(--line); border-left-width:4px; border-radius:8px; padding:8px 10px; min-width:180px; flex:0 0 auto; background:#fafafa; }
+.gnode .gid { font-weight:600; font-size:13px; display:flex; justify-content:space-between; gap:8px; align-items:center; }
+.gnode .gtime { font-size:11px; color:var(--muted); margin-top:2px; }
+.gnode .why { font-size:11px; color:#374151; margin-top:5px; }
+.gnode.未开始 { border-left-color:#9ca3af; }
+.gnode.运行中 { border-left-color:var(--run); background:var(--runbg); }
+.gnode.成功 { border-left-color:var(--ok); background:var(--okbg); }
+.gnode.失败 { border-left-color:var(--fail); background:var(--failbg); }
+.gnode.已回滚 { border-left-color:var(--rb); background:var(--rbbg); }
+.gnode.需要人工接管 { border-left-color:var(--manual); background:var(--manualbg); }
+.gnode.blocked { opacity:.75; border-left-color:var(--block); background:#f9fafb; }
+.gnode .acts { margin-top:6px; display:flex; gap:4px; flex-wrap:wrap; }
+.why ul { margin:2px 0 0 16px; padding:0; }
+.blocked-box { border:1px dashed #d1d5db; border-radius:8px; padding:8px 10px; margin-bottom:8px; background:#f9fafb; }
+.cycle-banner { background:var(--failbg); border:1px solid #fecaca; color:#991b1b; border-radius:8px; padding:8px 12px; margin-bottom:10px; font-size:13px; }
+.toast { position:fixed; right:18px; bottom:18px; max-width:380px; border-radius:8px; padding:10px 14px; font-size:13px; color:#fff; background:#111827; opacity:0; transform:translateY(8px); transition:.2s; pointer-events:none; z-index:50; }
+.toast.show { opacity:1; transform:translateY(0); }
+.toast.warn { background:#b45309; }
+.toast.err { background:#b91c1c; }
+table.log { width:100%; border-collapse:collapse; font-size:12px; }
+table.log th,table.log td { border-bottom:1px solid var(--line); padding:4px 6px; text-align:left; vertical-align:top; }
+table.log th { color:var(--muted); font-weight:600; }
+.muted { color:var(--muted); }
+.fp { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; background:#f3f4f6; padding:0 4px; border-radius:4px; }
+.mt8{margin-top:8px;} .mt12{margin-top:12px;}
+details summary { cursor:pointer; font-size:13px; font-weight:600; }
+.scroll { max-height:280px; overflow:auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>迁移依赖规划器</h1>
+  <div class="sub">登记迁移节点 · 互斥资源与维护窗口 · 稳定波次调度 · 崩溃恢复与回滚边界</div>
+</header>
+
+<div class="layout">
+  <div class="left">
+    <div class="card" id="node-editor-card">
+      <h2 id="editor-title">新增迁移节点</h2>
+      <input type="hidden" id="f-id">
+      <label>节点 ID（唯一）</label>
+      <input type="text" id="f-id-input" placeholder="例如 backfill-orders">
+      <label>名称</label>
+      <input type="text" id="f-name" placeholder="回填订单历史数据">
+      <div class="row">
+        <div><label>前置依赖（逗号分隔 ID）</label>
+          <input type="text" id="f-deps" placeholder="create-index"></div>
+      </div>
+      <label>互斥资源（逗号分隔）</label>
+      <input type="text" id="f-res" placeholder="table-orders">
+      <div class="row mt8">
+        <div><label>预计时长（分钟）</label><input type="number" id="f-dur" value="10" min="0" step="1"></div>
+        <div style="flex:0 0 110px;align-self:end">
+          <label class="check"><input type="checkbox" id="f-roll">可回滚</label>
+        </div>
+      </div>
+      <div class="row mt8">
+        <div><label>输入 schema 指纹</label><input type="text" id="f-infp" placeholder="可留空表示不校验"></div>
+        <div><label>输出 schema 指纹</label><input type="text" id="f-outfp" placeholder="成功后应得到"></div>
+      </div>
+      <div class="row mt12">
+        <button class="primary" id="btn-save-node">保存节点</button>
+        <button id="btn-cancel-edit" style="display:none">取消编辑</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>规划：起始指纹与维护窗口</h2>
+      <label>起始 schema 指纹</label>
+      <input type="text" id="p-start" placeholder="可留空">
+      <div class="row mt8">
+        <div><label>窗口开始</label><input type="datetime-local" id="p-ws" step="60"></div>
+        <div><label>窗口结束</label><input type="datetime-local" id="p-we" step="60"></div>
+      </div>
+      <label>维护窗口时区</label>
+      <select id="p-tz"></select>
+      <button class="primary mt12" id="btn-plan">生成可执行波次</button>
+    </div>
+
+    <div class="card">
+      <h2>历史计划（不可变快照）</h2>
+      <select id="plan-picker" size="4" style="width:100%"></select>
+      <div class="muted mt8" style="font-size:12px">修改节点定义不会影响已生成的历史计划。</div>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="card">
+      <h2 style="display:flex;justify-content:space-between;align-items:center">
+        <span>波次甘特布局</span>
+        <span id="plan-meta" class="muted" style="font-size:12px;font-weight:400"></span>
+      </h2>
+      <div id="cycle-banner"></div>
+      <div id="gantt"></div>
+      <div id="blocked-area" class="mt12"></div>
+    </div>
+
+    <div class="card">
+      <h2>执行控制 / 崩溃恢复 / 回滚</h2>
+      <div class="row">
+        <button id="btn-crash">模拟服务崩溃</button>
+        <button id="btn-recover">按当前事件重放恢复</button>
+      </div>
+      <div class="muted mt8" style="font-size:12px">
+        崩溃后“运行中”的节点标记为中断，可安全重跑；“成功且输出指纹匹配”的节点不会重跑；输出指纹漂移则整条后继链进入人工接管。
+      </div>
+      <div class="mt12" id="rollback-area"></div>
+    </div>
+
+    <div class="card">
+      <details>
+        <summary>事件日志（追加保存，幂等去重）</summary>
+        <div class="scroll mt8"><table class="log" id="event-log">
+          <thead><tr><th>#</th><th>时间</th><th>事件</th><th>节点</th><th>状态/指纹</th><th>幂等键</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </details>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let STATE = { nodes:{}, plans:[], selectedPlanId:"", plan:null, states:{}, events:[] };
+let lastCycle = null;
+let editingId = null;
+
+const TZS = ["Asia/Tokyo","Asia/Shanghai","UTC","America/New_York","Europe/London","Australia/Sydney"];
+function initTz() {
+  const sel = $("p-tz");
+  sel.innerHTML = TZS.map(t => `<option ${t==="Asia/Tokyo"?"selected":""}>${t}</option>`).join("");
+}
+function pad(n){return String(n).padStart(2,"0");}
+function toLocalInput(d) {
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function defaultWindow() {
+  const d = new Date(); d.setMinutes(0,0); d.setHours(d.getHours()+1);
+  const e = new Date(d.getTime()+2*60*60*1000);
+  $("p-ws").value = toLocalInput(d);
+  $("p-we").value = toLocalInput(e);
+}
+
+function toast(msg, kind) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "toast show " + (kind || "");
+  clearTimeout(t._h);
+  t._h = setTimeout(()=>{ t.className="toast"; }, 3200);
+}
+
+async function api(path, body) {
+  const res = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body||{})});
+  const data = await res.json().catch(()=>({error:"响应解析失败"}));
+  if (!res.ok && data.error) throw new Error(data.error);
+  return data;
+}
+async function refresh(planId) {
+  const qs = planId ? "?plan="+encodeURIComponent(planId) : "";
+  STATE = await (await fetch("/api/state"+qs)).json();
+  render();
+}
+
+function splitList(v){ return v.split(",").map(s=>s.trim()).filter(Boolean); }
+function fmtMin(d) { return Math.round((d||0)/60/1e9); }
+
+function loadNodeForm(n) {
+  editingId = n ? n.id : null;
+  $("editor-title").textContent = n ? "编辑迁移节点：" + n.id : "新增迁移节点";
+  $("f-id-input").value = n ? n.id : "";
+  $("f-id-input").disabled = !!n;
+  $("f-name").value = n?.name || "";
+  $("f-deps").value = (n?.dependsOn||[]).join(", ");
+  $("f-res").value = (n?.mutexResources||[]).join(", ");
+  $("f-dur").value = n ? fmtMin(n.duration) : 10;
+  $("f-roll").checked = n?.rollbackable || false;
+  $("f-infp").value = n?.inputFingerprint || "";
+  $("f-outfp").value = n?.outputFingerprint || "";
+  $("btn-cancel-edit").style.display = n ? "" : "none";
+}
+
+$("btn-save-node").onclick = async () => {
+  const body = {
+    id: $("f-id-input").value.trim(),
+    name: $("f-name").value.trim(),
+    dependsOn: splitList($("f-deps").value),
+    mutexResources: splitList($("f-res").value),
+    durationMin: Number($("f-dur").value),
+    rollbackable: $("f-roll").checked,
+    inputFingerprint: $("f-infp").value.trim(),
+    outputFingerprint: $("f-outfp").value.trim(),
+  };
+  if (!body.id) { toast("节点 ID 不能为空","err"); return; }
+  try {
+    await api("/api/nodes", body);
+    loadNodeForm(null);
+    toast("节点已保存（定义变更只影响之后的新计划）");
+    await refresh(STATE.selectedPlanId);
+  } catch(e) { toast(e.message,"err"); }
+};
+$("btn-cancel-edit").onclick = () => loadNodeForm(null);
+
+$("btn-plan").onclick = async () => {
+  try {
+    const data = await api("/api/plans", {
+      startFingerprint: $("p-start").value.trim(),
+      windowStart: $("p-ws").value,
+      windowEnd: $("p-we").value,
+      timezone: $("p-tz").value,
+    });
+    if (data.cycle) {
+      lastCycle = data.cycle;
+      toast("依赖图存在环，已拒绝生成","err");
+    } else {
+      lastCycle = null;
+      toast("波次已生成并作为不可变快照保存");
+    }
+    await refresh();
+  } catch(e) { toast(e.message,"err"); }
+};
+
+function escapeHtml(s){ return String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+function statusOf(id) { return STATE.states[id]?.status || "未开始"; }
+
+function renderNodes() {
+  const ids = Object.keys(STATE.nodes).sort();
+  if (!document.querySelector("#node-list")) {
+    const list = document.createElement("div");
+    list.id = "node-list";
+    list.className = "mt12";
+    $("node-editor-card").after(Object.assign(document.createElement("div"),{className:"card",id:"nl-wrap"}));
+    const wrap = $("nl-wrap");
+    wrap.innerHTML = "<h2>已登记节点（"+ids.length+"）</h2>";
+    wrap.appendChild(list);
+  }
+  const list = $("node-list");
+  const w = $("nl-wrap");
+  w.querySelector("h2").textContent = "已登记节点（" + ids.length + "）";
+  list.innerHTML = ids.map(id => {
+    const n = STATE.nodes[id];
+    return `<div class="node-item">
+      <div class="ttl"><span>${escapeHtml(n.id)} <span class="muted" style="font-weight:400">${escapeHtml(n.name||"")}</span></span>
+        <span><button class="small" onclick="editNode('${escapeHtml(n.id)}')">编辑</button>
+        <button class="small danger" onclick="deleteNode('${escapeHtml(n.id)}')">删除</button></span></div>
+      <div class="meta">依赖 ${n.dependsOn.length?escapeHtml(n.dependsOn.join(", ")):"—"} · 资源 ${n.mutexResources.length?escapeHtml(n.mutexResources.join(", ")):"—"} · ${fmtMin(n.duration)} 分钟 · ${n.rollbackable?"<b style='color:var(--ok)'>可回滚</b>":"<b style='color:var(--fail)'>不可回滚</b>"}</div>
+      <div class="meta">入 <span class="fp">${escapeHtml(n.inputFingerprint||"*")}</span> → 出 <span class="fp">${escapeHtml(n.outputFingerprint||"*")}</span></div>
+    </div>`;
+  }).join("");
+}
+window.editNode = (id) => loadNodeForm(STATE.nodes[id]);
+window.deleteNode = async (id) => {
+  if (!confirm("删除节点 "+id+" ？历史计划中的节点快照不会被删除。")) return;
+  await api("/api/nodes/delete", {id});
+  if (editingId===id) loadNodeForm(null);
+  await refresh(STATE.selectedPlanId);
+};
+function renderPlans() {
+  const sel = $("plan-picker");
+  sel.innerHTML = STATE.plans.map(p => {
+    const tz = p.request.windowStart;
+    return `<option value="${escapeHtml(p.id)}" ${p.id===STATE.selectedPlanId?"selected":""}>${escapeHtml(p.id)} · 波次 ${p.waveCount} · 阻塞 ${p.blocked.length}</option>`;
+  }).join("");
+  sel.onchange = () => refresh(sel.value);
+  const p = STATE.plan;
+  $("plan-meta").textContent = p
+    ? `${p.id} · 窗口 ${shortT(p.request.windowStart)}–${shortT(p.request.windowEnd)} · 起始指纹 ${p.request.startFingerprint||"(任意)"}`
+    : "尚未生成计划";
+}
+function shortT(iso){ if(!iso) return ""; const d=new Date(iso); return `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+function hhmm(iso){ const d=new Date(iso); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+
+function renderGantt() {
+  const p = STATE.plan;
+  const banner = $("cycle-banner");
+  banner.innerHTML = lastCycle ? `<div class="cycle-banner">依赖图存在环，已拒绝规划。具体环路：<b>${lastCycle.map(escapeHtml).join(" → ")}</b>。请先解除该依赖。</div>` : "";
+  if (!p) { $("gantt").innerHTML = '<div class="muted">选择起始 schema 指纹和维护窗口后点击“生成可执行波次”。</div>'; $("blocked-area").innerHTML=""; return; }
+  $("gantt").innerHTML = p.waves.map(w => {
+    const cells = w.nodeIds.map(id => {
+      const n = p.nodeSnapshot[id];
+      const st = statusOf(id);
+      const why = (p.explanations[id]||[]).map(r=>`<li>${escapeHtml(r)}</li>`).join("");
+      return `<div class="gnode ${escapeHtml(st)}">
+        <div class="gid"><span>${escapeHtml(id)}</span><span class="pill ${escapeHtml(st)}">${escapeHtml(st)}</span></div>
+        <div class="gtime">${hhmm(w.start)}–${hhmm(w.end)} · ${fmtMin(n.duration)} 分钟 · ${n.rollbackable?"可回滚":"<b>不可回滚</b>"}${n.mutexResources.length?" · 资源 "+escapeHtml(n.mutexResources.join(",")):""}</div>
+        <div class="why"><ul>${why}</ul></div>
+        <div class="acts">${nodeActions(id, st)}</div>
+      </div>`;
+    }).join("");
+    return `<div class="wave-row"><div class="wave-label">波次 ${w.index}<br><span class="muted">${hhmm(w.start)}</span></div><div class="wave-track">${cells}</div></div>`;
+  }).join("") || '<div class="muted">没有可在窗口内执行的波次，全部节点被阻塞。</div>';
+
+  $("blocked-area").innerHTML = p.blocked.length
+    ? `<h2 style="font-size:14px">被阻塞节点（${p.blocked.length}）</h2>` + p.blocked.map(b =>
+      `<div class="blocked-box"><b>${escapeHtml(b.nodeId)}</b><ul>${b.reasons.map(r=>`<li>${escapeHtml(r)}</li>`).join("")}</ul></div>`).join("")
+    : "";
+}
+
+function idemKey(action, id) {
+  // deterministic per plan+node+action+day-ish: use performance sequence plus
+  // server keeps last; for true retries user can keep same key
+  return [STATE.selectedPlanId, id, action, Date.now().toString(36)].join(":");
+}
+
+function nodeActions(id, st) {
+  const base = `data-node="${escapeHtml(id)}"`;
+  let btns = "";
+  if (st === "未开始") btns += `<button class="small primary" ${base} data-act="start">启动</button>`;
+  if (st === "运行中") {
+    btns += `<button class="small" ${base} data-act="succeed">记录成功…</button>`;
+    btns += `<button class="small danger" ${base} data-act="fail">记录失败…</button>`;
+  }
+  if (st === "失败") {
+    btns += `<button class="small primary" ${base} data-act="start">修正后前滚重试</button>`;
+    btns += `<button class="small" ${base} data-act="rollback">生成回滚计划</button>`;
+  }
+  return btns;
+}
+
+$("gantt").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-act]");
+  if (!btn) return;
+  const id = btn.dataset.node, act = btn.dataset.act, pid = STATE.selectedPlanId;
+  try {
+    if (act === "rollback") { await showRollback(id); return; }
+    let body = {planId:pid, nodeId:id, action:act, idempotencyKey:idemKey(act,id)};
+    if (act === "succeed") {
+      const declared = STATE.plan.nodeSnapshot[id].outputFingerprint || "";
+      const fp = prompt(`记录节点 ${id} 成功。请输入实际输出 schema 指纹：`, declared);
+      if (fp === null) return;
+      body.outputFingerprint = fp.trim();
+    }
+    if (act === "fail") {
+      const d = prompt(`记录节点 ${id} 失败原因（可选）：`, "执行中断：校验未通过");
+      if (d === null) return;
+      body.detail = d;
+    }
+    const r = await api("/api/execute", body);
+    if (r.idempotentHit) toast("相同幂等键已提交过，本次只保留一条记录（去重）","warn");
+    else toast(actMsg(act,id));
+    await refresh(pid);
+  } catch(err) { toast(err.message,"err"); }
+});
+function actMsg(act,id){ return {start:`节点 ${id} 已启动`,succeed:`节点 ${id} 已成功`,fail:`节点 ${id} 已标记失败（只能前滚或回滚祖先）`}[act]; }
+
+$("btn-crash").onclick = async () => {
+  if (!STATE.selectedPlanId) { toast("先生成计划","err"); return; }
+  try {
+    const r = await api("/api/crash", {planId: STATE.selectedPlanId, idempotencyKey:"crash:"+STATE.selectedPlanId+":"+Date.now().toString(36)});
+    if (r.idempotentHit) toast("重复的崩溃事件被幂等去重","warn");
+    else toast("已模拟崩溃：运行中的节点变为中断，点击“按当前事件重放恢复”查看恢复判断","warn");
+    await refresh(STATE.selectedPlanId);
+  } catch(e){ toast(e.message,"err"); }
+};
+$("btn-recover").onclick = async () => { await refresh(STATE.selectedPlanId); toast("已从追加事件重放：成功且指纹匹配的节点被跳过，中断节点可重跑，漂移链路被阻塞"); };
+
+async function showRollback(failedId) {
+  try {
+    const rp = await api("/api/rollback/plan", {planId:STATE.selectedPlanId, nodeId:failedId});
+    const area = $("rollback-area");
+    let html = `<h2 style="font-size:14px">失败节点 ${escapeHtml(failedId)} 的回滚计划</h2>`;
+    if (rp.complete) html += `<div class="muted" style="font-size:12px">以下步骤覆盖全部已执行祖先，按逆序执行。</div>`;
+    else html += `<div class="cycle-banner" style="background:var(--failbg)"><b>回滚必须在此明确停止：</b>${escapeHtml(rp.boundary)}</div>`;
+    if (rp.boundary && rp.complete) html += `<div class="muted mt8" style="font-size:12px">${escapeHtml(rp.boundary)}</div>`;
+    html += rp.steps.map((s,i)=>`<div class="blocked-box">${i+1}. 回滚 <b>${escapeHtml(s.nodeId)}</b> — ${escapeHtml(s.reason)}
+      <div class="mt8"><button class="small primary" onclick="doRollbackStep('${escapeHtml(failedId)}','${escapeHtml(s.nodeId)}')">执行该回滚步骤</button></div></div>`).join("") || '<div class="muted">没有可回滚步骤。</div>';
+    area.innerHTML = html;
+    area.scrollIntoView({behavior:"smooth", block:"nearest"});
+    await refresh(STATE.selectedPlanId);
+  } catch(e){ toast(e.message,"err"); }
+}
+window.doRollbackStep = async (failedId, nodeId) => {
+  try {
+    const r = await api("/api/rollback/step", {planId:STATE.selectedPlanId, failedNodeId:failedId, nodeId, idempotencyKey:["rb",STATE.selectedPlanId,failedId,nodeId].join(":")});
+    if (r.idempotentHit) toast("该回滚步骤已提交过（幂等去重）","warn");
+    else toast(`节点 ${nodeId} 已回滚`);
+    await refresh(STATE.selectedPlanId);
+    await showRollback(failedId);
+  } catch(e){ toast(e.message,"err"); }
+};
+
+function renderEvents() {
+  const tb = $("event-log").querySelector("tbody");
+  const evs = (STATE.events||[]).slice().reverse();
+  tb.innerHTML = evs.map(e => `<tr>
+    <td>${e.seq}</td><td>${shortT(e.time)} ${hhmm(e.time)}</td>
+    <td>${escapeHtml(typeLabel(e.type))}${e.detail?`<div class="muted">${escapeHtml(e.detail)}</div>`:""}</td>
+    <td>${escapeHtml(e.nodeId||"")}</td>
+    <td>${e.outputFingerprint?`<span class="fp">${escapeHtml(e.outputFingerprint)}</span>`:""}</td>
+    <td>${e.idempotencyKey?`<span class="fp">${escapeHtml(e.idempotencyKey)}</span>`:""}</td>
+  </tr>`).join("");
+}
+function typeLabel(t){ return ({node_upserted:"登记/修改节点",node_deleted:"删除节点",plan_created:"生成计划",node_started:"启动",node_succeeded:"成功",node_failed:"失败",node_rolled_back:"已回滚",crash_simulated:"崩溃模拟"})[t]||t; }
+
+function render() {
+  renderNodes();
+  renderPlans();
+  renderGantt();
+  renderEvents();
+  const anyRunning = Object.values(STATE.states||{}).some(s=>s.status==="运行中");
+  $("btn-crash").disabled = !STATE.selectedPlanId || !anyRunning;
+  if (STATE.idempotentHit) toast("幂等命中：结果已存在，未重复记录","warn");
+}
+
+initTz();
+defaultWindow();
+loadNodeForm(null);
+refresh();
+</script>
+</body>
+</html>
